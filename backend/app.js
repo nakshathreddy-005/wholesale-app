@@ -13,7 +13,24 @@ import chatbotRoutes from './routes/chatbotRoutes.js';
 
 const app = express();
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
+import cors from 'cors';
+
+const allowedOrigins = [
+  process.env.CLIENT_URL, // https://wholesale-app-mu.vercel.app
+  /^https:\/\/wholesale-.*-nakshathra-s-projects\.vercel\.app$/,
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    const isAllowed = allowedOrigins.some(allowed =>
+      allowed instanceof RegExp ? allowed.test(origin) : allowed === origin
+    );
+    if (isAllowed) callback(null, true);
+    else callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
