@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import Sidebar from '../components/common/Sidebar';
-import Header from '../components/common/Header';
+import Sidebar from './Sidebar';
+import Header from './Header';
 
 const pageTitles = {
   '/dashboard': 'Dashboard',
