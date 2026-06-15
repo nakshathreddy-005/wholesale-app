@@ -4,201 +4,93 @@ import Customer from '../models/Customer.js';
 import Supplier from '../models/Supplier.js';
 import InventoryLog from '../models/InventoryLog.js';
 
-// ── Gather live business data from MongoDB ──────────────────────────────────
-const getBusinessContext = async () => {
+// Parse user intent from message
+const parseIntent = (message) => {
+  const msg = message.toLowerCase();
+  if (msg.includes('low stock') || msg.includes('restock') || msg.includes('running out')) return 'low_stock';
+  if (msg.includes('today') && (msg.includes('sale') || msg.includes('revenue'))) return 'today_sales';
+  if (msg.includes('top sell') || msg.includes('best sell') || msg.includes('popular')) return 'top_selling';
+  if (msg.includes('pending') && msg.includes('payment')) return 'pending_payments';
+  if (msg.includes('total revenue') || msg.includes('total sales')) return 'total_revenue';
+  if (msg.includes('stock') && (msg.includes('check') || msg.includes('how many'))) return 'check_stock';
+  if (msg.includes('customer')) return 'customer_info';
+  if (msg.includes('supplier')) return 'supplier_info';
+  if (msg.includes('invoice') && msg.includes('recent')) return 'recent_invoices';
+  if (msg.includes('profit') || msg.includes('earning')) return 'profit_analysis';
+  return 'general';
+};
+
+const executeIntent = async (intent, message) => {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-  const [
-    allProducts,
-    todaySales,
-    monthSales,
-    totalRevenue,
-    pendingInvoices,
-    recentInvoices,
-    topSelling,
-    totalCustomers,
-    totalSuppliers,
-    recentLogs,
-  ] = await Promise.all([
-    Product.find({ isActive: true }).select('name sku stock lowStockThreshold sellingPrice purchasePrice category unit gstRate'),
-    Invoice.aggregate([{ $match: { createdAt: { $gte: today } } }, { $group: { _id: null, total: { $sum: '$grandTotal' }, count: { $sum: 1 } } }]),
-    Invoice.aggregate([{ $match: { createdAt: { $gte: thisMonth } } }, { $group: { _id: null, total: { $sum: '$grandTotal' }, count: { $sum: 1 } } }]),
-    Invoice.aggregate([{ $group: { _id: null, total: { $sum: '$grandTotal' }, count: { $sum: 1 } } }]),
-    Invoice.find({ paymentStatus: 'pending' }).populate('customer', 'name phone').sort('-createdAt').limit(10),
-    Invoice.find().populate('customer', 'name').sort('-createdAt').limit(5),
-    Invoice.aggregate([
-      { $unwind: '$items' },
-      { $group: { _id: '$items.product', name: { $first: '$items.productName' }, qty: { $sum: '$items.quantity' }, revenue: { $sum: '$items.total' } } },
-      { $sort: { qty: -1 } }, { $limit: 5 },
-    ]),
-    Customer.countDocuments({ isActive: true }),
-    Supplier.countDocuments({ isActive: true }),
-    InventoryLog.find().populate('product', 'name').sort('-createdAt').limit(5),
-  ]);
-
-  const lowStockProducts = allProducts.filter(p => p.stock <= p.lowStockThreshold);
-
-  return {
-    summary: {
-      totalProducts: allProducts.length,
-      lowStockCount: lowStockProducts.length,
-      totalCustomers,
-      totalSuppliers,
-      todayRevenue: todaySales[0]?.total || 0,
-      todayInvoices: todaySales[0]?.count || 0,
-      monthRevenue: monthSales[0]?.total || 0,
-      monthInvoices: monthSales[0]?.count || 0,
-      totalRevenue: totalRevenue[0]?.total || 0,
-      totalInvoices: totalRevenue[0]?.count || 0,
-      pendingCount: pendingInvoices.length,
-      pendingAmount: pendingInvoices.reduce((s, i) => s + (i.grandTotal - i.paidAmount), 0),
-    },
-    lowStockProducts: lowStockProducts.map(p => ({ name: p.name, sku: p.sku, stock: p.stock, threshold: p.lowStockThreshold, unit: p.unit })),
-    allProducts: allProducts.map(p => ({ name: p.name, sku: p.sku, category: p.category, stock: p.stock, sellingPrice: p.sellingPrice, purchasePrice: p.purchasePrice, unit: p.unit })),
-    topSelling: topSelling.map((p, i) => ({ rank: i + 1, name: p.name, unitsSold: p.qty, revenue: p.revenue })),
-    recentInvoices: recentInvoices.map(i => ({ number: i.invoiceNumber, customer: i.customer?.name, amount: i.grandTotal, status: i.paymentStatus, date: i.createdAt })),
-    pendingInvoices: pendingInvoices.map(i => ({ number: i.invoiceNumber, customer: i.customer?.name, phone: i.customer?.phone, amount: i.grandTotal - i.paidAmount, date: i.createdAt })),
-    recentStockMovements: recentLogs.map(l => ({ product: l.product?.name, type: l.type, qty: l.quantity, date: l.createdAt })),
-  };
+  switch (intent) {
+    case 'low_stock': {
+      const products = await Product.find({ isActive: true });
+      const lowStock = products.filter(p => p.isLowStock);
+      if (lowStock.length === 0) return { text: '✅ Great news! All products are well-stocked. No items need restocking right now.', data: null };
+      return {
+        text: `⚠️ Found **${lowStock.length} products** with low stock that need attention:`,
+        data: { type: 'low_stock_table', items: lowStock.map(p => ({ name: p.name, stock: p.stock, threshold: p.lowStockThreshold, sku: p.sku })) },
+      };
+    }
+    case 'today_sales': {
+      const sales = await Invoice.aggregate([
+        { $match: { createdAt: { $gte: today } } },
+        { $group: { _id: null, total: { $sum: '$grandTotal' }, count: { $sum: 1 } } },
+      ]);
+      const s = sales[0] || { total: 0, count: 0 };
+      return { text: `📊 **Today's Sales Summary:**\n\n- Total Revenue: ₹${s.total.toFixed(2)}\n- Total Invoices: ${s.count}`, data: null };
+    }
+    case 'top_selling': {
+      const top = await Invoice.aggregate([
+        { $unwind: '$items' },
+        { $group: { _id: '$items.product', name: { $first: '$items.productName' }, qty: { $sum: '$items.quantity' }, rev: { $sum: '$items.total' } } },
+        { $sort: { qty: -1 } }, { $limit: 5 },
+      ]);
+      return {
+        text: `🏆 **Top 5 Selling Products:**`,
+        data: { type: 'top_products', items: top.map((p, i) => ({ rank: i + 1, name: p.name, qty: p.qty, revenue: p.rev })) },
+      };
+    }
+    case 'pending_payments': {
+      const pending = await Invoice.find({ paymentStatus: 'pending' }).populate('customer', 'name phone').limit(10).sort('-createdAt');
+      const totalPending = pending.reduce((sum, inv) => sum + (inv.grandTotal - inv.paidAmount), 0);
+      return {
+        text: `💰 **Pending Payments:** ${pending.length} invoices totaling ₹${totalPending.toFixed(2)}`,
+        data: { type: 'pending_invoices', items: pending.map(inv => ({ number: inv.invoiceNumber, customer: inv.customer?.name, amount: inv.grandTotal - inv.paidAmount, date: inv.createdAt })) },
+      };
+    }
+    case 'total_revenue': {
+      const rev = await Invoice.aggregate([{ $group: { _id: null, total: { $sum: '$grandTotal' }, count: { $sum: 1 } } }]);
+      const r = rev[0] || { total: 0, count: 0 };
+      return { text: `💹 **Total Revenue:** ₹${r.total.toFixed(2)} across ${r.count} invoices`, data: null };
+    }
+    case 'recent_invoices': {
+      const invoices = await Invoice.find().populate('customer', 'name').limit(5).sort('-createdAt');
+      return {
+        text: `📄 **Last 5 Invoices:**`,
+        data: { type: 'recent_invoices', items: invoices.map(inv => ({ number: inv.invoiceNumber, customer: inv.customer?.name, amount: inv.grandTotal, status: inv.paymentStatus, date: inv.createdAt })) },
+      };
+    }
+    case 'profit_analysis': {
+      const products = await Product.find({ isActive: true });
+      const avgMargin = products.reduce((sum, p) => sum + parseFloat(p.profitMargin), 0) / products.length;
+      return { text: `📈 **Profit Analysis:**\n\n- Products Tracked: ${products.length}\n- Average Profit Margin: ${avgMargin.toFixed(1)}%\n\nTip: Go to Reports > Profit Analysis for detailed breakdown.`, data: null };
+    }
+    default:
+      return {
+        text: `🤖 I can help you with:\n\n- **Low stock alerts** — "Show low stock products"\n- **Today's sales** — "What are today's sales?"\n- **Top products** — "Show top selling products"\n- **Pending payments** — "Show pending invoices"\n- **Revenue** — "What is total revenue?"\n- **Recent invoices** — "Show recent invoices"`,
+        data: null,
+      };
+  }
 };
 
-// ── Call Claude AI API ──────────────────────────────────────────────────────
-const askClaude = async (userMessage, businessData, history = []) => {
-  const systemPrompt = `You are an intelligent AI assistant for a wholesale business management system called "WholeSale Pro". 
-You have access to real-time business data provided below. Answer questions accurately using this data.
-Be concise, helpful, and use INR (₹) for currency. Use emojis to make responses friendly.
-When listing products or data, be specific with numbers. Give actionable business advice when relevant.
-
-=== LIVE BUSINESS DATA ===
-${JSON.stringify(businessData, null, 2)}
-=========================
-
-Always answer based on the data above. If data is empty or zero, mention that honestly.`;
-
-  const messages = [
-    ...history.slice(-6), // keep last 6 messages for context
-    { role: 'user', content: userMessage },
-  ];
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages,
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error?.message || 'Claude API error');
-  }
-
-  const data = await response.json();
-  return data.content[0]?.text || 'Sorry, I could not generate a response.';
-};
-
-// ── Detect if response needs structured table data ──────────────────────────
-const extractStructuredData = (userMessage, businessData) => {
-  const msg = userMessage.toLowerCase();
-  if ((msg.includes('low stock') || msg.includes('restock')) && businessData.lowStockProducts.length > 0) {
-    return { type: 'low_stock_table', items: businessData.lowStockProducts };
-  }
-  if (msg.includes('top sell') || msg.includes('best sell') || msg.includes('popular')) {
-    return businessData.topSelling.length > 0 ? { type: 'top_products', items: businessData.topSelling } : null;
-  }
-  if (msg.includes('pending') && (msg.includes('payment') || msg.includes('invoice'))) {
-    return businessData.pendingInvoices.length > 0 ? { type: 'pending_invoices', items: businessData.pendingInvoices } : null;
-  }
-  if (msg.includes('recent invoice') || msg.includes('last invoice')) {
-    return businessData.recentInvoices.length > 0 ? { type: 'recent_invoices', items: businessData.recentInvoices } : null;
-  }
-  return null;
-};
-
-// ── Main chat handler ───────────────────────────────────────────────────────
 export const chat = async (req, res, next) => {
   try {
-    const { message, history = [] } = req.body;
+    const { message } = req.body;
     if (!message?.trim()) return res.status(400).json({ success: false, message: 'Message is required' });
-
-    // Gather live data
-    const businessData = await getBusinessContext();
-
-    let reply;
-    let usedAI = false;
-
-    // Use Claude AI if API key is set, otherwise fall back to smart rules
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        reply = await askClaude(message, businessData, history);
-        usedAI = true;
-      } catch (aiErr) {
-        console.error('Claude API error, falling back to rule-based:', aiErr.message);
-        reply = getFallbackReply(message, businessData);
-      }
-    } else {
-      reply = getFallbackReply(message, businessData);
-    }
-
-    // Attach structured table data if relevant
-    const data = extractStructuredData(message, businessData);
-
-    res.json({ success: true, reply, data, usedAI });
+    const intent = parseIntent(message);
+    const result = await executeIntent(intent, message);
+    res.json({ success: true, reply: result.text, data: result.data, intent });
   } catch (err) { next(err); }
-};
-
-// ── Smart fallback (works without API key) ──────────────────────────────────
-const getFallbackReply = (message, bd) => {
-  const msg = message.toLowerCase();
-  const s = bd.summary;
-
-  if (msg.includes('low stock') || msg.includes('restock') || msg.includes('running out')) {
-    if (bd.lowStockProducts.length === 0) return '✅ Great news! All products are well-stocked. No items need restocking right now.';
-    return `⚠️ **${bd.lowStockProducts.length} product(s)** are running low on stock and need restocking urgently!`;
-  }
-  if ((msg.includes('today') || msg.includes("today's")) && (msg.includes('sale') || msg.includes('revenue'))) {
-    return `📊 **Today's Sales:**\n\n- Revenue: ₹${s.todayRevenue.toFixed(2)}\n- Invoices: ${s.todayInvoices}\n- This Month: ₹${s.monthRevenue.toFixed(2)}`;
-  }
-  if (msg.includes('top sell') || msg.includes('best sell') || msg.includes('popular')) {
-    if (bd.topSelling.length === 0) return '📦 No sales data yet. Create some invoices to see top selling products!';
-    return `🏆 **Top ${bd.topSelling.length} Selling Products:**\n\n${bd.topSelling.map(p => `${p.rank}. ${p.name} — ${p.unitsSold} units sold`).join('\n')}`;
-  }
-  if (msg.includes('pending') && msg.includes('payment')) {
-    return `💰 **Pending Payments:** ${s.pendingCount} invoices totaling ₹${s.pendingAmount.toFixed(2)}`;
-  }
-  if (msg.includes('total revenue') || msg.includes('total sales') || msg.includes('overall revenue')) {
-    return `💹 **Total Revenue:** ₹${s.totalRevenue.toFixed(2)} across ${s.totalInvoices} invoices\n📅 This month: ₹${s.monthRevenue.toFixed(2)}`;
-  }
-  if (msg.includes('recent invoice') || msg.includes('last invoice')) {
-    if (bd.recentInvoices.length === 0) return '📄 No invoices found yet. Create your first invoice in the Billing section!';
-    return `📄 **Last ${bd.recentInvoices.length} Invoices:**\n\n${bd.recentInvoices.map(i => `• ${i.number} — ${i.customer} — ₹${i.amount?.toFixed(2)} (${i.status})`).join('\n')}`;
-  }
-  if (msg.includes('product') && (msg.includes('how many') || msg.includes('total') || msg.includes('count'))) {
-    return `📦 You have **${s.totalProducts} products** in total.\n⚠️ ${s.lowStockCount} are low on stock.`;
-  }
-  if (msg.includes('customer') && (msg.includes('how many') || msg.includes('total') || msg.includes('count'))) {
-    return `👥 You have **${s.totalCustomers} active customers** registered.`;
-  }
-  if (msg.includes('supplier') && (msg.includes('how many') || msg.includes('total') || msg.includes('count'))) {
-    return `🏭 You have **${s.totalSuppliers} active suppliers** registered.`;
-  }
-  if (msg.includes('profit') || msg.includes('margin')) {
-    const products = bd.allProducts;
-    if (products.length === 0) return '📈 No products found to calculate profit margins.';
-    const avgMargin = products.reduce((sum, p) => sum + ((p.sellingPrice - p.purchasePrice) / p.sellingPrice * 100), 0) / products.length;
-    return `📈 **Profit Overview:**\n\n- Products tracked: ${products.length}\n- Average margin: ${avgMargin.toFixed(1)}%\n- Total revenue: ₹${s.totalRevenue.toFixed(2)}`;
-  }
-  if (msg.includes('hello') || msg.includes('hi') || msg.includes('hey')) {
-    return `👋 Hello! I'm your AI Business Assistant.\n\nHere's a quick snapshot:\n📦 Products: ${s.totalProducts} (${s.lowStockCount} low stock)\n💰 Today's Revenue: ₹${s.todayRevenue.toFixed(2)}\n⏳ Pending: ${s.pendingCount} invoices\n\nWhat would you like to know?`;
-  }
-
-  return `🤖 I can help you with:\n\n- **Low stock alerts** — "Show low stock products"\n- **Today's sales** — "What are today's sales?"\n- **Top products** — "Show top selling products"\n- **Pending payments** — "Show pending payments"\n- **Revenue** — "What is total revenue?"\n- **Recent invoices** — "Show recent invoices"\n- **Counts** — "How many customers do I have?"\n\nCurrent snapshot: ${s.totalProducts} products, ₹${s.totalRevenue.toFixed(2)} total revenue, ${s.pendingCount} pending invoices.`;
 };
