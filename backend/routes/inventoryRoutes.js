@@ -1,0 +1,10 @@
+import express from 'express';
+import { getInventoryLogs, stockIn, stockOut, adjustStock } from '../controllers/inventoryController.js';
+import { protect } from '../middleware/authMiddleware.js';
+const router = express.Router();
+router.use(protect);
+router.get('/logs', getInventoryLogs);
+router.post('/stock-in', stockIn);
+router.post('/stock-out', stockOut);
+router.post('/adjust', adjustStock);
+export default router;

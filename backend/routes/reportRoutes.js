@@ -1,0 +1,11 @@
+import express from 'express';
+import { getSalesReport, getInventoryReport, getCustomerReport, getSupplierReport, exportCSV } from '../controllers/reportController.js';
+import { protect, adminOnly } from '../middleware/authMiddleware.js';
+const router = express.Router();
+router.use(protect);
+router.get('/sales', getSalesReport);
+router.get('/inventory', getInventoryReport);
+router.get('/customers', getCustomerReport);
+router.get('/suppliers', getSupplierReport);
+router.get('/export/:type', exportCSV);
+export default router;
