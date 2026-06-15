@@ -13,7 +13,6 @@ import chatbotRoutes from './routes/chatbotRoutes.js';
 
 const app = express();
 
-import cors from 'cors';
 
 const allowedOrigins = [
   process.env.CLIENT_URL, // https://wholesale-app-mu.vercel.app
