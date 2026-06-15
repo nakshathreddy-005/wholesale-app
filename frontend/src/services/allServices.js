@@ -41,5 +41,5 @@ export const reportService = {
 };
 
 export const chatbotService = {
-  chat: (message) => api.post('/bot/chat', { message }),
+  chat: (message, history = []) => api.post('/bot/chat', { message, history }),
 };

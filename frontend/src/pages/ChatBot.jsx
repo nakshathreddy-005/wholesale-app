@@ -53,7 +53,14 @@ const BotMessage = ({ msg }) => {
           <p className="text-sm text-gray-800 whitespace-pre-line leading-relaxed">{msg.text}</p>
           {msg.data && renderData(msg.data)}
         </div>
-        <p className="text-xs text-gray-400 mt-1 ml-1">{msg.time}</p>
+        <div className="flex items-center gap-2 mt-1 ml-1">
+          <p className="text-xs text-gray-400">{msg.time}</p>
+          {msg.usedAI && (
+            <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1">
+              <MdAutoAwesome className="text-xs" /> Claude AI
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -94,13 +101,31 @@ const ChatBot = () => {
     const msg = (text || input).trim();
     if (!msg || loading) return;
     setInput('');
-    setMessages(prev => [...prev, { id: Date.now(), role: 'user', text: msg, time: getTime() }]);
+
+    const userMsg = { id: Date.now(), role: 'user', text: msg, time: getTime() };
+    setMessages(prev => [...prev, userMsg]);
     setLoading(true);
+
     try {
-      const { data } = await chatbotService.chat(msg);
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'bot', text: data.reply, data: data.data, time: getTime() }]);
+      // Build history in Claude API format (last 6 exchanges)
+      const history = messages
+        .filter(m => m.role !== 'bot' || m.id !== 1) // skip welcome msg
+        .slice(-6)
+        .map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }));
+
+      const { data } = await chatbotService.chat(msg, history);
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1, role: 'bot',
+        text: data.reply, data: data.data,
+        usedAI: data.usedAI,
+        time: getTime(),
+      }]);
     } catch {
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'bot', text: '❌ Sorry, I ran into an error. Please try again.', data: null, time: getTime() }]);
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1, role: 'bot',
+        text: '❌ Sorry, I ran into an error. Please try again.',
+        data: null, time: getTime(),
+      }]);
     } finally { setLoading(false); inputRef.current?.focus(); }
   };
 
