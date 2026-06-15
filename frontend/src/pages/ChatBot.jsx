@@ -57,7 +57,7 @@ const BotMessage = ({ msg }) => {
           <p className="text-xs text-gray-400">{msg.time}</p>
           {msg.usedAI && (
             <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1">
-              <MdAutoAwesome className="text-xs" /> Claude AI
+              <MdAutoAwesome className="text-xs" /> Gemini AI
             </span>
           )}
         </div>
@@ -107,7 +107,7 @@ const ChatBot = () => {
     setLoading(true);
 
     try {
-      // Build history in Claude API format (last 6 exchanges)
+      // Build conversation history to send to the backend (last 6 exchanges)
       const history = messages
         .filter(m => m.role !== 'bot' || m.id !== 1) // skip welcome msg
         .slice(-6)
